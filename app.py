@@ -1,15 +1,19 @@
 """
-Smart Traffic Monitoring and Vehicle Classification System.
-Professional Streamlit Dashboard featuring:
-1. Overview: System status, active models, hardware details, recent traffic sessions.
-2. Dataset Explorer: Validation, corrupt image detection, class imbalance, synthetic sample generator.
-3. Train Model: Custom CNN, ResNet-18, MobileNetV3 training with live curves and metrics.
-4. Model Comparison: Side-by-side benchmark of accuracy, F1, latency, throughput, params.
-5. Image Classification: Single vehicle crop inference with probability breakdown & uncertainty flags.
-6. Live/Video Monitoring: YOLO + ByteTrack vehicle tracking, virtual line counting, density estimation.
-7. Traffic Analytics: Historical session insights, time-series density trends, class proportions.
-8. Reports: Exportable CSV, JSON, and annotated video artifacts.
-9. Settings/About: CUDA verification, COCO mapping limits, dataset sources manifest, speed caveats.
+Smart Traffic Monitor - Streamlit dashboard.
+
+Pages (sidebar label -> internal page key):
+    Dashboard        -> Overview
+    Dataset Check    -> Dataset Explorer
+    Train            -> Train Model
+    Compare Models   -> Model Comparison
+    Classify Image   -> Image Classification
+    Video Counting   -> Live/Video Monitoring
+    Traffic Insights -> Traffic Analytics
+    Exports          -> Reports & Exports
+    System & Notes   -> Settings & About
+
+Only the presentation layer changed. Every backend call (training, detection,
+tracking, density, database, prediction) is used exactly as before.
 """
 
 import io
@@ -74,322 +78,419 @@ from utils import (
 
 logger = setup_logger("streamlit_app")
 
-# Page Configuration
+# ------------------------------------------------------------------------------
+# Page config
+# ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Smart Traffic AI & Vehicle Classifier",
+    page_title="Smart Traffic Monitor",
     page_icon="🚦",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Dark Navy Theme & Custom CSS
-st.markdown(
-    """
-    <style>
-    /* Dark Navy Palette */
-    .stApp {
-        background-color: #0B111E;
-        color: #E2E8F0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    /* Card Styles */
-    .metric-card {
-        background: linear-gradient(135deg, #131E32 0%, #17243B 100%);
-        border: 1px solid #1E2E4B;
-        border-radius: 10px;
-        padding: 18px;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-    }
-    .metric-title {
-        font-size: 0.82rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #94A3B8;
-        margin-bottom: 6px;
-    }
-    .metric-value {
-        font-size: 1.7rem;
-        font-weight: 700;
-        color: #38BDF8;
-    }
-    .metric-sub {
-        font-size: 0.78rem;
-        color: #64748B;
-        margin-top: 4px;
-    }
-    /* Badges */
-    .badge-green {
-        background-color: #064E3B;
-        color: #34D399;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .badge-yellow {
-        background-color: #78350F;
-        color: #FBBF24;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .badge-red {
-        background-color: #7F1D1D;
-        color: #F87171;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .badge-blue {
-        background-color: #1E3A8A;
-        color: #60A5FA;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        display: inline-block;
-    }
-    /* Section Headers */
-    .section-header {
-        font-size: 1.35rem;
-        font-weight: 700;
-        color: #F8FAFC;
-        border-bottom: 2px solid #1E2E4B;
-        padding-bottom: 8px;
-        margin-top: 15px;
-        margin-bottom: 18px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# ------------------------------------------------------------------------------
+# Design system
+#   Asphalt sidebar, concrete workspace, lane-marking yellow as the signature.
+#   Green = actions/healthy, amber = caution, red = problems.
+#   Type: Barlow Semi Condensed (headings, numbers) + Barlow (body).
+# ------------------------------------------------------------------------------
+ASPHALT = "#1F2326"
+CONCRETE = "#ECEDEA"
+PAINT = "#F5B700"
+SIGNAL = "#1F7A5C"
+BRAKE = "#C8372D"
+INK = "#15181A"
+MUTED = "#677074"
 
-# Ensure Database is initialized
+APP_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap');
+
+:root {
+    --asphalt: #1F2326;
+    --concrete: #ECEDEA;
+    --paint: #F5B700;
+    --signal: #1F7A5C;
+    --brake: #C8372D;
+    --ink: #15181A;
+    --muted: #677074;
+    --line: #D6D9D3;
+    --radius: 4px;
+}
+
+html, body, .stApp, [class*="css"] {
+    font-family: 'Barlow', 'Segoe UI', sans-serif;
+}
+.stApp { background: var(--concrete); color: var(--ink); }
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent; }
+.block-container { max-width: 1280px; padding-top: 2.2rem; padding-bottom: 4rem; }
+
+/* ---------- Page header ---------- */
+.page-head { margin-bottom: 1.6rem; }
+.page-head h1 {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 2.3rem; font-weight: 700; letter-spacing: -0.01em;
+    color: var(--ink); margin: 0; padding: 0; line-height: 1.1;
+}
+.page-head p { color: var(--muted); font-size: 1.02rem; margin: 6px 0 0 0; max-width: 70ch; }
+.lane {
+    height: 4px; margin-top: 16px;
+    background: repeating-linear-gradient(90deg, var(--paint) 0 28px, transparent 28px 46px);
+}
+
+/* ---------- Section headers ---------- */
+.section-header {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 1.3rem; font-weight: 600; color: var(--ink);
+    margin: 2rem 0 0.9rem 0; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+}
+
+/* ---------- Stat panels ---------- */
+.panel {
+    background: #fff; border: 1px solid var(--line);
+    border-left: 4px solid var(--ink);
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px;
+}
+.panel.tone-green { border-left-color: var(--signal); }
+.panel.tone-amber { border-left-color: var(--paint); }
+.panel.tone-red   { border-left-color: var(--brake); }
+.panel .stat-label { font-size: 0.88rem; color: var(--muted); font-weight: 500; }
+.panel .stat-value {
+    font-family: 'Barlow Semi Condensed', sans-serif;
+    font-size: 2rem; font-weight: 600; color: var(--ink); line-height: 1.15; margin-top: 2px;
+}
+.panel .stat-sub { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+
+.step {
+    background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; height: 100%;
+}
+.step b { font-family: 'Barlow Semi Condensed', sans-serif; font-size: 1.1rem; }
+.step span { display: block; color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+.step i {
+    font-style: normal; display: inline-block; width: 22px; height: 22px; line-height: 22px;
+    text-align: center; border-radius: 50%; background: var(--paint); color: var(--ink);
+    font-weight: 600; font-size: 0.8rem; margin-right: 8px;
+}
+
+/* ---------- Native metrics ---------- */
+[data-testid="stMetric"] {
+    background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 12px 14px;
+}
+[data-testid="stMetricValue"] {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600;
+}
+
+/* ---------- Badges ---------- */
+.badge-green, .badge-yellow, .badge-red, .badge-blue {
+    padding: 4px 10px; border-radius: var(--radius); font-size: 0.82rem;
+    font-weight: 600; display: inline-block;
+}
+.badge-green  { background: #DCEFE6; color: #14573F; }
+.badge-yellow { background: #FFF0BF; color: #7A5600; }
+.badge-red    { background: #F7DAD6; color: #8E2118; }
+.badge-blue   { background: #DDE6EC; color: #234559; }
+
+/* ---------- Buttons ---------- */
+.stButton > button, .stDownloadButton > button {
+    border-radius: var(--radius); font-weight: 600; border: 1px solid var(--ink);
+    background: #fff; color: var(--ink);
+}
+.stButton > button:hover, .stDownloadButton > button:hover {
+    border-color: var(--signal); color: var(--signal);
+}
+.stButton > button[kind="primary"], button[data-testid="stBaseButton-primary"] {
+    background: var(--signal); border-color: var(--signal); color: #fff;
+}
+.stButton > button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
+    background: #17624A; border-color: #17624A; color: #fff;
+}
+:focus-visible { outline: 3px solid var(--paint) !important; outline-offset: 2px; }
+
+/* ---------- Tabs ---------- */
+.stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom: 1px solid var(--line); }
+.stTabs [data-baseweb="tab"] { font-weight: 600; }
+
+/* ---------- Sidebar ---------- */
+[data-testid="stSidebar"] { background: var(--asphalt); border-right: 0; }
+[data-testid="stSidebar"] * { color: #E7E9E4; }
+[data-testid="stSidebar"] hr { border-color: #343B40; }
+.brand { padding: 4px 0 2px 0; }
+.brand b {
+    font-family: 'Barlow Semi Condensed', sans-serif; font-size: 1.5rem; font-weight: 700;
+    color: #fff; display: block; line-height: 1.1;
+}
+.brand span { font-size: 0.85rem; color: #9AA3A8; }
+.brand .lane { height: 3px; margin-top: 12px; }
+.chip {
+    display: inline-block; padding: 3px 9px; border-radius: var(--radius);
+    font-size: 0.78rem; font-weight: 600; background: #2E353A; color: #E7E9E4 !important;
+    margin: 0 4px 4px 0;
+}
+.chip.ok   { background: #1D4E3D; color: #8FE0BE !important; }
+.chip.warn { background: #4A3A0A; color: var(--paint) !important; }
+.side-label { font-size: 0.8rem; color: #9AA3A8 !important; margin: 14px 0 4px 2px; }
+
+/* Radio -> nav list */
+[data-testid="stSidebar"] [role="radiogroup"] { gap: 2px; }
+[data-testid="stSidebar"] [role="radiogroup"] label {
+    padding: 9px 12px; border-radius: var(--radius); width: 100%;
+    border-left: 3px solid transparent; cursor: pointer;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label > div:first-child { display: none; }
+[data-testid="stSidebar"] [role="radiogroup"] label p { font-size: 0.98rem; font-weight: 500; }
+[data-testid="stSidebar"] [role="radiogroup"] label:hover { background: #2A3034; }
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
+    background: #2E353A; border-left-color: var(--paint);
+}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p {
+    color: #fff; font-weight: 600;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] * { color: var(--ink) !important; }
+
+@media (max-width: 700px) {
+    .page-head h1 { font-size: 1.8rem; }
+    .block-container { padding-top: 1.2rem; }
+}
+</style>
+"""
+st.markdown(APP_CSS, unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------------------
+# UI helpers (presentation only)
+# ------------------------------------------------------------------------------
+def page_header(title: str, blurb: str) -> None:
+    st.markdown(
+        f"<div class='page-head'><h1>{title}</h1><p>{blurb}</p><div class='lane'></div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def section(title: str) -> None:
+    st.markdown(f"<div class='section-header'>{title}</div>", unsafe_allow_html=True)
+
+
+def stat_panel(label: str, value: Any, sub: str = "", tone: str = "ink") -> None:
+    st.markdown(
+        f"""
+        <div class='panel tone-{tone}'>
+            <div class='stat-label'>{label}</div>
+            <div class='stat-value'>{value}</div>
+            <div class='stat-sub'>{sub}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# Ensure database is initialized
 init_db()
 dev_info = get_device_info()
 
-# Sidebar Navigation
-st.sidebar.markdown("### 🚦 Smart Traffic AI")
+# ------------------------------------------------------------------------------
+# Sidebar
+# ------------------------------------------------------------------------------
 st.sidebar.markdown(
-    f"<span class='badge-blue'>PyTorch {dev_info['pytorch_version']}</span> "
-    f"<span class='{'badge-green' if dev_info['cuda_available'] else 'badge-yellow'}'>"
-    f"{dev_info['device_name']}</span>",
+    "<div class='brand'><b>Smart Traffic Monitor</b>"
+    "<span>Vehicle detection, tracking and classification</span>"
+    "<div class='lane'></div></div>",
     unsafe_allow_html=True,
 )
-st.sidebar.markdown("---")
+cuda_class = "ok" if dev_info["cuda_available"] else "warn"
+st.sidebar.markdown(
+    f"<div style='margin-top:12px'>"
+    f"<span class='chip'>PyTorch {dev_info['pytorch_version']}</span>"
+    f"<span class='chip {cuda_class}'>{dev_info['device_name']}</span></div>",
+    unsafe_allow_html=True,
+)
 
-PAGES = [
-    "Overview",
-    "Dataset Explorer",
-    "Train Model",
-    "Model Comparison",
-    "Image Classification",
-    "Live/Video Monitoring",
-    "Traffic Analytics",
-    "Reports & Exports",
-    "Settings & About",
-]
+# Display label -> internal page key (keeps the page logic below untouched)
+NAV = {
+    "Dashboard": "Overview",
+    "Dataset Check": "Dataset Explorer",
+    "Train": "Train Model",
+    "Compare Models": "Model Comparison",
+    "Classify Image": "Image Classification",
+    "Video Counting": "Live/Video Monitoring",
+    "Traffic Insights": "Traffic Analytics",
+    "Exports": "Reports & Exports",
+    "System & Notes": "Settings & About",
+}
+st.sidebar.markdown("<div class='side-label'>Go to</div>", unsafe_allow_html=True)
+nav_label = st.sidebar.radio("Go to", list(NAV.keys()), label_visibility="collapsed")
+page_choice = NAV[nav_label]
 
-page_choice = st.sidebar.radio("Navigate System", PAGES)
-
-# Discover Available Trained Checkpoints
+# Discover available trained checkpoints
 available_checkpoints = sorted(list(MODELS_DIR.glob("*.pth")))
 checkpoint_options = {cp.name: cp for cp in available_checkpoints}
 
+st.sidebar.markdown("<div class='side-label'>Classifier in use</div>", unsafe_allow_html=True)
 if checkpoint_options:
     selected_cp_name = st.sidebar.selectbox(
-        "Active Classifier Checkpoint",
+        "Classifier in use",
         list(checkpoint_options.keys()),
         index=0,
+        label_visibility="collapsed",
     )
     active_checkpoint_path = checkpoint_options[selected_cp_name]
 else:
-    st.sidebar.info("No trained checkpoints yet in `models/`.")
+    st.sidebar.caption("No trained model yet. Train one to enable classification.")
     active_checkpoint_path = None
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Smart Traffic & Vehicle Classifier v1.0.0\nFully reproducible & verified.")
+st.sidebar.caption("v1.0.0")
 
 
 # ==============================================================================
-# PAGE 1: OVERVIEW
+# PAGE 1: DASHBOARD
 # ==============================================================================
 if page_choice == "Overview":
-    st.title("Traffic Monitoring & Vehicle Classification System")
-    st.markdown(
-        "Deep Learning surveillance system integrating a custom scratch-trained CNN, "
-        "transfer learning benchmarks (ResNet-18, MobileNetV3-Small), Ultralytics YOLO object detection, "
-        "ByteTrack multi-object tracking, and virtual line-crossing density analytics."
+    page_header(
+        "Dashboard",
+        "A snapshot of your hardware, models and recorded traffic runs.",
     )
 
-    # Top Metric Tiles
     experiments = get_experiments()
     sessions = get_traffic_sessions()
     latest_exp = get_latest_experiment()
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(
-            f"""
-            <div class='metric-card'>
-                <div class='metric-title'>Compute Hardware</div>
-                <div class='metric-value'>{dev_info['current_device'].upper()}</div>
-                <div class='metric-sub'>{dev_info['device_name']} ({dev_info.get('total_vram_gb', 0)} GB)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        stat_panel(
+            "Compute device",
+            dev_info["current_device"].upper(),
+            f"{dev_info['device_name']} ({dev_info.get('total_vram_gb', 0)} GB)",
+            tone="green" if dev_info["cuda_available"] else "amber",
         )
     with c2:
-        st.markdown(
-            f"""
-            <div class='metric-card'>
-                <div class='metric-title'>Vehicle Classes</div>
-                <div class='metric-value'>{len(VEHICLE_CLASSES)}</div>
-                <div class='metric-sub'>Auto, Rickshaw, 2-Wheelers, Bus, Truck, Car</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        stat_panel("Vehicle classes", len(VEHICLE_CLASSES), "Auto, rickshaw, two-wheelers, bus, truck, car")
     with c3:
-        st.markdown(
-            f"""
-            <div class='metric-card'>
-                <div class='metric-title'>Logged Experiments</div>
-                <div class='metric-value'>{len(experiments)}</div>
-                <div class='metric-sub'>Recorded in SQLite database</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        stat_panel("Training runs", len(experiments), "Saved in the local database")
     with c4:
-        st.markdown(
-            f"""
-            <div class='metric-card'>
-                <div class='metric-title'>Monitored Sessions</div>
-                <div class='metric-value'>{len(sessions)}</div>
-                <div class='metric-sub'>Video traffic runs stored</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        stat_panel("Video sessions", len(sessions), "Processed traffic videos")
 
-    st.markdown("<div class='section-header'>Latest Experiment Snapshot</div>", unsafe_allow_html=True)
+    section("Latest training run")
     if latest_exp:
         e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Architecture", latest_exp["architecture"])
+        e1.metric("Model", latest_exp["architecture"])
         e1.caption(f"Status: {latest_exp['status']}")
-        e2.metric("Best Val Accuracy", f"{latest_exp['best_val_accuracy']*100:.2f}%" if latest_exp['best_val_accuracy'] else "N/A")
-        e2.caption(f"Val Loss: {latest_exp['best_val_loss']:.4f}" if latest_exp['best_val_loss'] else "")
-        e3.metric("Test Accuracy", f"{latest_exp['test_accuracy']*100:.2f}%" if latest_exp['test_accuracy'] else "Not Evaluated")
+        e2.metric("Best validation accuracy", f"{latest_exp['best_val_accuracy']*100:.2f}%" if latest_exp['best_val_accuracy'] else "N/A")
+        e2.caption(f"Validation loss: {latest_exp['best_val_loss']:.4f}" if latest_exp['best_val_loss'] else "")
+        e3.metric("Test accuracy", f"{latest_exp['test_accuracy']*100:.2f}%" if latest_exp['test_accuracy'] else "Not evaluated")
         e3.caption(f"Test F1: {latest_exp['test_macro_f1']*100:.2f}%" if latest_exp['test_macro_f1'] else "")
-        e4.metric("Epochs Completed", f"{latest_exp['epochs']}")
-        e4.caption(f"Duration: {format_time(latest_exp['training_duration_seconds'] or 0)}")
+        e4.metric("Epochs completed", f"{latest_exp['epochs']}")
+        e4.caption(f"Took {format_time(latest_exp['training_duration_seconds'] or 0)}")
     else:
-        st.info("No training runs recorded yet. Head over to **Train Model** to run your first experiment!")
+        st.info("No training runs yet. Open **Train** to start your first one.")
 
-    # System Architecture Summary
-    st.markdown("<div class='section-header'>Architectural Pipeline</div>", unsafe_allow_html=True)
-    st.markdown(
-        """
-        - **1. Data Preprocessing & Validation**: Stratified train/val/test splits, corrupt image filtering, class imbalance compensation via inverse-frequency weights.
-        - **2. Classifier Family**:
-            - `CustomTrafficCNN`: 4-stage convolutional feature extractor with BatchNorm, ReLU, AdaptiveAvgPool, and Dropout.
-            - `ResNet18Transfer`: Deep residual baseline with pretrained weights and custom linear head.
-            - `MobileNetV3Transfer`: Efficient inverted bottleneck architecture optimized for edge latency.
-        - **3. Object Detection & Tracking**: Ultralytics YOLOv8/11 coupled with ByteTrack to track vehicles and assign persistent track IDs.
-        - **4. Traffic Counting & Density**: Line crossing vector math preventing double counts, plus optical occupancy ratio for Low/Med/High classification.
-        """
+    section("How the system works")
+    s1, s2, s3, s4 = st.columns(4)
+    s1.markdown(
+        "<div class='step'><b><i>1</i>Prepare data</b>"
+        "<span>Stratified train/val/test split, corrupt-image filtering and inverse-frequency class weights.</span></div>",
+        unsafe_allow_html=True,
+    )
+    s2.markdown(
+        "<div class='step'><b><i>2</i>Classify crops</b>"
+        "<span>Custom CNN, ResNet-18 and MobileNetV3-Small, compared on the same test split.</span></div>",
+        unsafe_allow_html=True,
+    )
+    s3.markdown(
+        "<div class='step'><b><i>3</i>Detect and track</b>"
+        "<span>Ultralytics YOLO finds vehicles, ByteTrack gives each one a persistent ID.</span></div>",
+        unsafe_allow_html=True,
+    )
+    s4.markdown(
+        "<div class='step'><b><i>4</i>Count and measure</b>"
+        "<span>Line-crossing counts without double counting, plus low/medium/high density.</span></div>",
+        unsafe_allow_html=True,
     )
 
 
 # ==============================================================================
-# PAGE 2: DATASET EXPLORER
+# PAGE 2: DATASET CHECK
 # ==============================================================================
 elif page_choice == "Dataset Explorer":
-    st.title("Dataset Explorer & Validation Engine")
-    st.markdown(
-        "Inspect dataset integrity, verify folder structure, detect corrupt images, "
-        "and analyze class imbalance prior to model training."
+    page_header(
+        "Dataset check",
+        "Check folder structure, find corrupt images and see class balance before you train.",
     )
 
-    dataset_path_str = st.text_input("Dataset Directory Path", value=str(DATASET_DIR))
+    dataset_path_str = st.text_input("Dataset folder", value=str(DATASET_DIR))
     c_btn1, c_btn2 = st.columns(2)
-    run_val = c_btn1.button("🔍 Run Dataset Validation", use_container_width=True)
-    gen_sample = c_btn2.button("🧪 Generate Sample Synthetic Dataset (7-Class)", use_container_width=True)
+    run_val = c_btn1.button("Validate dataset", use_container_width=True)
+    gen_sample = c_btn2.button("Generate sample dataset (7 classes)", use_container_width=True)
 
     if gen_sample:
-        with st.spinner("Generating sample synthetic dataset with 7 vehicle classes..."):
+        with st.spinner("Generating sample dataset with 7 vehicle classes..."):
             out_p = create_synthetic_sample_dataset(dataset_path_str, samples_per_class=14)
-            st.success(f"Sample dataset generated at `{out_p}`! You can now validate or train immediately.")
+            st.success(f"Sample dataset created at `{out_p}`. You can validate or train on it now.")
 
     if run_val or Path(dataset_path_str).exists():
         report = validate_dataset(dataset_path_str)
 
         if report["is_valid"]:
-            st.success(f"Dataset is valid! Found {report['total_valid_images']} total images.")
+            st.success(f"Dataset is valid. {report['total_valid_images']} images found.")
         else:
-            st.error(f"Dataset validation encountered issues: {', '.join(report['errors'])}")
+            st.error(f"Dataset has problems: {', '.join(report['errors'])}")
 
         if report["warnings"]:
             for w in report["warnings"]:
                 st.warning(w)
 
-        # Split Summary Tiles
-        st.markdown("<div class='section-header'>Partition Counts</div>", unsafe_allow_html=True)
+        section("Images per split")
         cols = st.columns(len(report["splits_found"]) if report["splits_found"] else 1)
         for idx, split in enumerate(report["splits_found"]):
             with cols[idx]:
                 cnt = sum(report["counts_by_split"].get(split, {}).values())
-                st.metric(f"Split: {split.upper()}", f"{cnt} images")
+                st.metric(split.capitalize(), f"{cnt} images")
 
-        # Class Distribution Chart
         if report["counts_by_split"]:
-            st.markdown("<div class='section-header'>Class Distribution</div>", unsafe_allow_html=True)
+            section("Class distribution")
             df_counts = pd.DataFrame(report["counts_by_split"]).fillna(0).astype(int)
             st.bar_chart(df_counts)
 
-        # Imbalance Analysis
         if report.get("class_imbalance"):
             imb = report["class_imbalance"]
-            st.markdown("<div class='section-header'>Class Imbalance Assessment</div>", unsafe_allow_html=True)
+            section("Class balance")
             i1, i2, i3 = st.columns(3)
-            i1.metric("Imbalance Ratio (Max / Min)", f"{imb['imbalance_ratio']}x")
+            i1.metric("Largest / smallest class", f"{imb['imbalance_ratio']}x")
             i2.metric("Severity", imb["severity"])
-            i3.metric("Recommended Action", "Inverse Class Weighting Enabled" if imb["imbalance_ratio"] > 1.5 else "Standard Loss")
+            i3.metric("Loss function", "Class-weighted" if imb["imbalance_ratio"] > 1.5 else "Standard")
 
 
 # ==============================================================================
-# PAGE 3: TRAIN MODEL
+# PAGE 3: TRAIN
 # ==============================================================================
 elif page_choice == "Train Model":
-    st.title("Train Vehicle Classifier")
-    st.markdown(
-        "Train a custom CNN from scratch or fine-tune ResNet-18 / MobileNetV3-Small. "
-        "Class count is dynamically inferred from your dataset."
+    page_header(
+        "Train a classifier",
+        "Train a custom CNN from scratch or fine-tune ResNet-18 or MobileNetV3-Small. "
+        "The number of classes is read from your dataset.",
     )
+
+    section("Model and data")
+    data_dir_input = st.text_input("Dataset folder", value=str(DATASET_DIR))
 
     col_cfg1, col_cfg2 = st.columns(2)
     with col_cfg1:
-        arch_select = st.selectbox("Model Architecture", CLASSIFIER_ARCHITECTURES, index=0)
+        arch_select = st.selectbox("Model", CLASSIFIER_ARCHITECTURES, index=0)
         epochs_select = st.slider("Epochs", min_value=1, max_value=50, value=5)
-        batch_select = st.select_slider("Batch Size", options=[4, 8, 16, 32, 64], value=16)
-        img_size_select = st.select_slider("Image Resolution (px)", options=[128, 224, 256], value=224)
+        batch_select = st.select_slider("Batch size", options=[4, 8, 16, 32, 64], value=16)
+        img_size_select = st.select_slider("Image size (px)", options=[128, 224, 256], value=224)
 
     with col_cfg2:
-        lr_select = st.select_slider("Learning Rate", options=[1e-4, 5e-4, 1e-3, 5e-3], value=1e-3)
-        weight_decay_select = st.number_input("Weight Decay", value=DEFAULT_WEIGHT_DECAY, format="%.5f")
-        patience_select = st.number_input("Early Stopping Patience", min_value=1, max_value=20, value=DEFAULT_PATIENCE)
-        use_weights = st.checkbox("Apply Class Imbalance Weights", value=True)
+        lr_select = st.select_slider("Learning rate", options=[1e-4, 5e-4, 1e-3, 5e-3], value=1e-3)
+        weight_decay_select = st.number_input("Weight decay", value=DEFAULT_WEIGHT_DECAY, format="%.5f")
+        patience_select = st.number_input("Stop early after (epochs without improvement)", min_value=1, max_value=20, value=DEFAULT_PATIENCE)
+        use_weights = st.checkbox("Balance classes with weights", value=True)
 
-    data_dir_input = st.text_input("Dataset Directory Path", value=str(DATASET_DIR))
-
-    if st.button("🚀 Start Model Training", type="primary", use_container_width=True):
+    if st.button("Start training", type="primary", use_container_width=True):
+        section("Training progress")
         p_bar = st.progress(0)
         status_txt = st.empty()
         metrics_table = st.empty()
@@ -401,14 +502,14 @@ elif page_choice == "Train Model":
             p_bar.progress(curr_epoch / total_epochs)
             status_txt.markdown(
                 f"**Epoch {curr_epoch}/{total_epochs}** | "
-                f"Train Loss: `{record['train_loss']}` | Train Acc: `{record['train_acc']*100:.1f}%` | "
-                f"Val Loss: `{record['val_loss']}` | Val Acc: `{record['val_acc']*100:.1f}%`"
+                f"Train loss: `{record['train_loss']}` | Train acc: `{record['train_acc']*100:.1f}%` | "
+                f"Val loss: `{record['val_loss']}` | Val acc: `{record['val_acc']*100:.1f}%`"
             )
             epoch_logs.append(record)
             metrics_table.dataframe(pd.DataFrame(epoch_logs).tail(5), use_container_width=True)
 
         try:
-            with st.spinner("Training in progress..."):
+            with st.spinner("Training..."):
                 train_res = train_classifier(
                     data_dir=Path(data_dir_input),
                     arch=arch_select,
@@ -424,36 +525,35 @@ elif page_choice == "Train Model":
                     results_dir=RESULTS_DIR,
                     progress_callback=on_epoch_update,
                 )
-            st.success(f"Training Complete! Saved checkpoint: `{train_res['checkpoint_path']}`")
+            st.success(f"Training finished. Checkpoint saved to `{train_res['checkpoint_path']}`")
             if Path(train_res["curves_png"]).exists():
-                st.image(train_res["curves_png"], caption="Training and Validation Loss/Accuracy Curves")
+                st.image(train_res["curves_png"], caption="Loss and accuracy curves")
         except Exception as e:
-            st.error(f"Training Failed: {e}")
+            st.error(f"Training failed: {e}")
 
 
 # ==============================================================================
-# PAGE 4: MODEL COMPARISON
+# PAGE 4: COMPARE MODELS
 # ==============================================================================
 elif page_choice == "Model Comparison":
-    st.title("Model Comparison & Benchmark")
-    st.markdown(
-        "Evaluate multiple trained classifiers side-by-side on the identical test split. "
-        "Benchmark parameter count, checkpoint size, latency, throughput, and macro F1."
+    page_header(
+        "Compare models",
+        "Run trained classifiers on the same test split and compare accuracy, F1, speed and size.",
     )
 
     all_cps = sorted(list(MODELS_DIR.glob("*.pth")))
     if not all_cps:
-        st.warning("No `.pth` checkpoints found in `models/`. Please train models first in **Train Model**.")
+        st.warning("No `.pth` checkpoints found in `models/`. Train a model first.")
     else:
         selected_cps = st.multiselect(
-            "Select Checkpoints to Compare",
+            "Models to compare",
             [c.name for c in all_cps],
             default=[c.name for c in all_cps][:3],
         )
-        test_dir_in = st.text_input("Held-out Test Directory", value=str(DATASET_DIR / "test"))
+        test_dir_in = st.text_input("Test folder", value=str(DATASET_DIR / "test"))
 
-        if st.button("⚖️ Run Benchmark Comparison", type="primary") and selected_cps:
-            with st.spinner("Running benchmarks and computing metrics..."):
+        if st.button("Run comparison", type="primary") and selected_cps:
+            with st.spinner("Benchmarking models..."):
                 from compare_models import compare_models
                 cp_paths = [MODELS_DIR / name for name in selected_cps]
                 try:
@@ -463,39 +563,41 @@ elif page_choice == "Model Comparison":
                         output_dir=RESULTS_DIR,
                         device_name="auto",
                     )
-                    st.success("Benchmark completed!")
+                    st.success("Comparison finished.")
+                    section("Results")
                     df_comp = pd.DataFrame(comp_res["comparison_table"])
                     st.dataframe(df_comp, use_container_width=True)
 
                     if Path(comp_res["comparison_plot"]).exists():
-                        st.image(comp_res["comparison_plot"], caption="Comparative Metrics & Latency")
+                        st.image(comp_res["comparison_plot"], caption="Accuracy, F1 and latency by model")
                 except Exception as e:
-                    st.error(f"Comparison benchmark failed: {e}")
+                    st.error(f"Comparison failed: {e}")
 
 
 # ==============================================================================
-# PAGE 5: IMAGE CLASSIFICATION
+# PAGE 5: CLASSIFY IMAGE
 # ==============================================================================
 elif page_choice == "Image Classification":
-    st.title("Single Vehicle Image Inference")
-    st.markdown(
-        "Classify a single vehicle crop with softmax probability distribution and uncertainty detection."
+    page_header(
+        "Classify an image",
+        "Upload one cropped vehicle photo to see the predicted type and how confident the model is.",
     )
 
     if not active_checkpoint_path:
-        st.warning("Please train or provide a model checkpoint in `models/`.")
+        st.warning("No trained model found. Train one first, or place a `.pth` file in `models/`.")
     else:
-        st.info(f"Using Checkpoint: `{active_checkpoint_path.name}`")
-        conf_thresh = st.slider("Confidence Certainty Threshold", 0.1, 1.0, 0.50, 0.05)
+        st.caption(f"Using model: `{active_checkpoint_path.name}`")
+        conf_thresh = st.slider("Minimum confidence", 0.1, 1.0, 0.50, 0.05,
+                                help="Predictions below this are flagged as uncertain.")
 
-        img_file = st.file_uploader("Upload Vehicle Image Crop", type=["jpg", "jpeg", "png", "webp"])
+        img_file = st.file_uploader("Vehicle image", type=["jpg", "jpeg", "png", "webp"])
 
         if img_file is not None:
             pil_image = Image.open(img_file).convert("RGB")
             c_img, c_res = st.columns([1, 1])
 
             with c_img:
-                st.image(pil_image, caption="Uploaded Image", use_container_width=True)
+                st.image(pil_image, caption="Your image", use_container_width=True)
 
             with c_res:
                 pred = predict_vehicle_image(
@@ -506,48 +608,46 @@ elif page_choice == "Image Classification":
                 )
 
                 if pred["is_uncertain"]:
-                    st.markdown(f"<span class='badge-yellow'>⚠️ {pred['uncertainty_warning']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span class='badge-yellow'>{pred['uncertainty_warning']}</span>", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"<span class='badge-green'>Predicted: {pred['predicted_class'].upper()}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span class='badge-green'>Predicted: {pred['predicted_class'].replace('_', ' ').title()}</span>", unsafe_allow_html=True)
 
-                st.metric("Confidence", f"{pred['confidence_percentage']}%")
-                st.metric("Inference Latency", f"{pred['inference_latency_ms']} ms", f"on {pred['device'].upper()}")
+                m1, m2 = st.columns(2)
+                m1.metric("Confidence", f"{pred['confidence_percentage']}%")
+                m2.metric("Inference time", f"{pred['inference_latency_ms']} ms", f"on {pred['device'].upper()}")
 
-                st.markdown("**Probability Distribution:**")
+                st.markdown("**Probability by class**")
                 df_p = pd.DataFrame(list(pred["class_probabilities"].items()), columns=["Class", "Probability"])
-                st.bar_chart(df_p.set_index("Class"))
+                st.bar_chart(df_p.set_index("Class"), color=SIGNAL)
 
-            st.caption(f"ℹ️ {pred['educational_notice']}")
+            st.caption(pred["educational_notice"])
 
 
 # ==============================================================================
-# PAGE 6: LIVE / VIDEO MONITORING
+# PAGE 6: VIDEO COUNTING
 # ==============================================================================
 elif page_choice == "Live/Video Monitoring":
-    st.title("Live / Video Traffic Surveillance & Counting")
-    st.markdown(
-        "Detect, track with ByteTrack, count bidirectional line crossings, "
-        "and estimate instantaneous traffic density."
+    page_header(
+        "Video counting",
+        "Detect and track vehicles in a road video, count line crossings and estimate traffic density.",
     )
 
-    # Sidebar settings for video
-    st.markdown("<div class='section-header'>Detection & Tracking Configuration</div>", unsafe_allow_html=True)
+    section("Settings")
     v1, v2, v3 = st.columns(3)
     with v1:
-        yolo_weight = st.text_input("YOLO Model Weight", value="yolov8n.pt")
-        conf_cut = st.slider("Detection Confidence", 0.1, 0.9, 0.25, 0.05)
+        yolo_weight = st.text_input("YOLO weights file", value="yolov8n.pt")
+        conf_cut = st.slider("Detection confidence", 0.1, 0.9, 0.25, 0.05)
     with v2:
-        use_refiner = st.checkbox("Enable CNN Subtype Refinement", value=bool(active_checkpoint_path))
+        use_refiner = st.checkbox("Refine vehicle type with classifier", value=bool(active_checkpoint_path))
         refiner_cp = active_checkpoint_path if use_refiner else None
-        line_y_ratio = st.slider("Counting Line Y-Position (%)", 20, 80, 55, 5)
+        line_y_ratio = st.slider("Counting line height (% from top)", 20, 80, 55, 5)
     with v3:
-        low_max_thresh = st.number_input("Low Density Max (vehicles)", value=4)
-        med_max_thresh = st.number_input("Medium Density Max (vehicles)", value=10)
+        low_max_thresh = st.number_input("Low density: up to (vehicles)", value=4)
+        med_max_thresh = st.number_input("Medium density: up to (vehicles)", value=10)
 
-    video_file = st.file_uploader("Upload Road Traffic Video", type=["mp4", "avi", "mov"])
+    video_file = st.file_uploader("Road traffic video", type=["mp4", "avi", "mov"])
 
     if video_file is not None:
-        # Save temporary video file
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tfile.write(video_file.read())
         video_path = tfile.name
@@ -558,31 +658,31 @@ elif page_choice == "Live/Video Monitoring":
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        st.write(f"Video Resolution: `{width}x{height}` | Total Frames: `{total_v_frames}` | FPS: `{orig_fps:.1f}`")
+        st.caption(f"{width}x{height} px  |  {total_v_frames} frames  |  {orig_fps:.1f} FPS")
 
-        # Initialize Tracker & Density Estimator
         counting_y = int(height * (line_y_ratio / 100.0))
         counting_line = ((20, counting_y), (width - 20, counting_y))
 
-        tracker = VehicleTracker(
-            model_path=yolo_weight,
-            tracker_type="bytetrack.yaml",
-            confidence_threshold=conf_cut,
-            refiner_checkpoint=refiner_cp,
-        )
-        density_est = TrafficDensityEstimator(
-            counting_line=counting_line,
-            density_thresholds={"low_max": low_max_thresh, "medium_max": med_max_thresh},
-        )
-
-        start_proc = st.button("▶️ Process Traffic Video", type="primary", use_container_width=True)
+        start_proc = st.button("Process video", type="primary", use_container_width=True)
 
         if start_proc:
+            # Heavy objects are created only when processing starts
+            tracker = VehicleTracker(
+                model_path=yolo_weight,
+                tracker_type="bytetrack.yaml",
+                confidence_threshold=conf_cut,
+                refiner_checkpoint=refiner_cp,
+            )
+            density_est = TrafficDensityEstimator(
+                counting_line=counting_line,
+                density_thresholds={"low_max": low_max_thresh, "medium_max": med_max_thresh},
+            )
+
+            section("Live preview")
             frame_window = st.image([])
             stat_window = st.empty()
             p_bar = st.progress(0)
 
-            # Output video writer
             out_video_path = RESULTS_DIR / "annotated_traffic_output.mp4"
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out_writer = cv2.VideoWriter(str(out_video_path), fourcc, orig_fps, (width, height))
@@ -602,17 +702,15 @@ elif page_choice == "Live/Video Monitoring":
                 # 1. Tracking update
                 tracks = tracker.update(frame)
 
-                # 2. Density & Counting update
+                # 2. Density & counting update
                 metrics = density_est.update(tracks, frame.shape, elapsed_seconds=elapsed_sec)
 
                 # 3. Draw annotations
                 annotated = tracker.draw_tracks(frame, tracks, draw_trails=True)
                 annotated = density_est.draw_density_overlay(annotated, metrics, show_hud=True)
 
-                # Write frame to output video
                 out_writer.write(annotated)
 
-                # Record frame log
                 session_frame_logs.append(
                     {
                         "frame_index": frame_idx,
@@ -624,27 +722,24 @@ elif page_choice == "Live/Video Monitoring":
                     }
                 )
 
-                # Update preview at periodic intervals
                 if frame_idx % 2 == 0 or frame_idx == total_v_frames:
                     rgb_frame = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
                     frame_window.image(rgb_frame, use_container_width=True)
                     if total_v_frames > 0:
                         p_bar.progress(min(1.0, frame_idx / total_v_frames))
 
-                    # Live status banner
                     stat_window.markdown(
-                        f"**Frame:** `{frame_idx}/{total_v_frames}` | "
-                        f"**Density:** `{metrics['density_level']}` | "
-                        f"**Total Passed:** `{metrics['total_counted']}` | "
-                        f"**Rate:** `{metrics['vehicles_per_minute']} VPM`"
+                        f"**Frame** `{frame_idx}/{total_v_frames}` | "
+                        f"**Density** `{metrics['density_level']}` | "
+                        f"**Vehicles counted** `{metrics['total_counted']}` | "
+                        f"**Rate** `{metrics['vehicles_per_minute']} per min`"
                     )
 
             cap.release()
             out_writer.release()
 
-            st.success("Video processing complete!")
+            st.success("Video processed.")
 
-            # Summarize and record session to database
             from analytics import summarize_traffic_session
             sess_id, sess_sum = summarize_traffic_session(
                 frame_logs=session_frame_logs,
@@ -656,25 +751,29 @@ elif page_choice == "Live/Video Monitoring":
                 classifier_refinement_used=bool(refiner_cp),
             )
 
-            st.info(f"Traffic session recorded as Session ID #{sess_id} in SQLite database.")
-            st.markdown(f"💾 Annotated video saved to: `{out_video_path}`")
+            st.info(f"Saved as session #{sess_id}. View it under **Traffic Insights**.")
+            st.markdown(f"Annotated video saved to `{out_video_path}`")
+        else:
+            cap.release()
     else:
-        st.info("Upload an MP4/AVI/MOV traffic video to start live surveillance.")
+        st.info("Upload an MP4, AVI or MOV video to begin.")
 
 
 # ==============================================================================
-# PAGE 7: TRAFFIC ANALYTICS
+# PAGE 7: TRAFFIC INSIGHTS
 # ==============================================================================
 elif page_choice == "Traffic Analytics":
-    st.title("Traffic Analytics & Historical Sessions")
-    st.markdown("Analyze vehicle counts, congestion profiles, and class proportions across sessions.")
+    page_header(
+        "Traffic insights",
+        "Vehicle counts, congestion over time and class mix for each processed video.",
+    )
 
     sessions = get_traffic_sessions()
     if not sessions:
-        st.info("No recorded sessions found in the database. Process a video in **Live/Video Monitoring** first.")
+        st.info("No sessions yet. Process a video in **Video Counting** first.")
     else:
         session_names = {f"Session #{s['id']} - {s['session_name']} ({s['timestamp'][:10]})": s["id"] for s in sessions}
-        picked_name = st.selectbox("Select Traffic Session", list(session_names.keys()))
+        picked_name = st.selectbox("Session", list(session_names.keys()))
         picked_id = session_names[picked_name]
 
         logs = get_traffic_session_logs(picked_id)
@@ -684,31 +783,33 @@ elif page_choice == "Traffic Analytics":
 
             a1, a2, a3, a4 = st.columns(4)
             s_meta = next(s for s in sessions if s["id"] == picked_id)
-            a1.metric("Total Counted", s_meta.get("total_vehicles_counted", 0))
-            a2.metric("Peak Density", s_meta.get("peak_density_level", "Low"))
+            a1.metric("Vehicles counted", s_meta.get("total_vehicles_counted", 0))
+            a2.metric("Peak density", s_meta.get("peak_density_level", "Low"))
             a3.metric("Duration", f"{s_meta.get('duration_seconds', 0):.1f}s")
-            a4.metric("Avg Vehicles / Frame", f"{s_meta.get('avg_density_count', 0):.1f}")
+            a4.metric("Average vehicles in view", f"{s_meta.get('avg_density_count', 0):.1f}")
 
-            st.markdown("<div class='section-header'>Vehicle Congestion Profile Over Time</div>", unsafe_allow_html=True)
-            st.line_chart(df_logs.set_index("timestamp_sec")["vehicle_count"])
+            section("Vehicles in view over time")
+            st.line_chart(df_logs.set_index("timestamp_sec")["vehicle_count"], color=SIGNAL)
 
-            st.markdown("<div class='section-header'>Cumulative Vehicle Class Breakdown</div>", unsafe_allow_html=True)
+            section("Vehicle types counted")
             last_counts = s_meta.get("class_counts", {})
             if last_counts:
                 df_cls = pd.DataFrame(list(last_counts.items()), columns=["Vehicle Class", "Count"])
-                st.bar_chart(df_cls.set_index("Vehicle Class"))
+                st.bar_chart(df_cls.set_index("Vehicle Class"), color=PAINT)
             else:
-                st.caption("No class-specific counts logged.")
+                st.caption("No per-class counts were logged for this session.")
 
 
 # ==============================================================================
-# PAGE 8: REPORTS & EXPORTS
+# PAGE 8: EXPORTS
 # ==============================================================================
 elif page_choice == "Reports & Exports":
-    st.title("Experiment & Traffic Reports")
-    st.markdown("Download machine-readable JSON and CSV reports and annotated video artifacts.")
+    page_header(
+        "Exports",
+        "Download training and traffic session records as CSV.",
+    )
 
-    tab1, tab2 = st.tabs(["Model Training Experiments", "Traffic Surveillance Sessions"])
+    tab1, tab2 = st.tabs(["Training runs", "Video sessions"])
 
     with tab1:
         experiments = get_experiments()
@@ -718,14 +819,14 @@ elif page_choice == "Reports & Exports":
 
             csv_data = df_exp.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Download Experiments CSV",
+                "Download training runs (CSV)",
                 csv_data,
                 "experiments_report.csv",
                 "text/csv",
                 use_container_width=True,
             )
         else:
-            st.info("No experiment logs found.")
+            st.info("No training runs recorded yet.")
 
     with tab2:
         sessions = get_traffic_sessions()
@@ -735,26 +836,29 @@ elif page_choice == "Reports & Exports":
 
             csv_sess = df_sess.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Download Traffic Sessions CSV",
+                "Download video sessions (CSV)",
                 csv_sess,
                 "traffic_sessions_report.csv",
                 "text/csv",
                 use_container_width=True,
             )
         else:
-            st.info("No traffic sessions found.")
+            st.info("No video sessions recorded yet.")
 
 
 # ==============================================================================
-# PAGE 9: SETTINGS & ABOUT
+# PAGE 9: SYSTEM & NOTES
 # ==============================================================================
 elif page_choice == "Settings & About":
-    st.title("System Settings & Research Documentation")
+    page_header(
+        "System and notes",
+        "Hardware details, how COCO classes map to ours, data sources and known limits.",
+    )
 
-    st.markdown("<div class='section-header'>Hardware & Device Diagnostics</div>", unsafe_allow_html=True)
+    section("Hardware")
     st.json(dev_info)
 
-    st.markdown("<div class='section-header'>Standard COCO to 7-Class Vehicle Mapping</div>", unsafe_allow_html=True)
+    section("COCO to 7-class vehicle mapping")
     st.table(
         pd.DataFrame(
             [
@@ -769,23 +873,23 @@ elif page_choice == "Settings & About":
         )
     )
 
-    st.markdown("<div class='section-header'>Dataset Manifest & Public Sources</div>", unsafe_allow_html=True)
+    section("Public datasets")
     st.markdown(
         """
-        | Dataset Name | Primary Vehicle Classes | License | Limitation / Notes |
+        | Dataset | Vehicle classes | License | Notes |
         |---|---|---|---|
         | **Stanford Cars** | Cars (196 sub-models) | Research / CC BY | Cars only; no two-wheelers or auto-rickshaws |
-        | **Indian Driving Dataset (IDD)** | Auto-rickshaw, Motorcycle, Bus, Car, Truck, Bicycle | CC BY-NC 4.0 | Excellent coverage for Indian road conditions |
-        | **BDD100K** | Car, Bus, Truck, Motorcycle, Bicycle | BSD-3-Clause | Large diversity; lacks auto-rickshaw |
-        | **MIO-TCD** | Motorized & non-motorized classes | Non-commercial | Traffic camera viewpoints |
+        | **Indian Driving Dataset (IDD)** | Auto-rickshaw, motorcycle, bus, car, truck, bicycle | CC BY-NC 4.0 | Best fit for Indian road conditions |
+        | **BDD100K** | Car, bus, truck, motorcycle, bicycle | BSD-3-Clause | Very diverse; no auto-rickshaw |
+        | **MIO-TCD** | Motorized and non-motorized classes | Non-commercial | Traffic-camera viewpoints |
         """
     )
 
-    st.markdown("<div class='section-header'>Scientific Rigor & Limitations</div>", unsafe_allow_html=True)
+    section("Known limits")
     st.warning(DENSITY_DISCLAIMER)
     st.markdown(
         """
-        - **Speed Estimation**: True speed calculation (km/h) requires camera intrinsic and extrinsic matrix calibration to project 2D image coordinates onto the ground plane. Estimating speeds without calibration markers produces scientifically arbitrary values.
-        - **Classifier vs. Detector**: A classifier processes isolated vehicle image crops. To locate vehicles in full road scenes, an object detector (YOLO) is required.
+        - **Speed estimation:** Real speed (km/h) needs camera calibration to map image pixels onto the road plane. Without calibration markers, any speed value is arbitrary.
+        - **Classifier vs. detector:** The classifier only looks at a single cropped vehicle. Finding vehicles in a full road scene needs the YOLO detector.
         """
     )

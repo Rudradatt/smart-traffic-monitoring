@@ -45,19 +45,16 @@ def summarize_traffic_session(
     total_frames = len(frame_logs)
     duration_sec = total_frames / max(fps, 1.0)
 
-    # Final cumulative counts from the last logged frame
     last_log = frame_logs[-1]
     last_cum_counts = last_log.get("cumulative_counts", {})
     total_vehicles_counted = sum(last_cum_counts.values()) if last_cum_counts else 0
 
-    # Density breakdown
     counts = [log.get("vehicle_count", 0) for log in frame_logs]
     density_levels = [log.get("density_level", "Low") for log in frame_logs]
 
     avg_density_count = round(float(np.mean(counts)), 2) if counts else 0.0
     peak_count = max(counts) if counts else 0
 
-    # Peak density level
     level_counts = Counter(density_levels)
     most_common_level = level_counts.most_common(1)[0][0] if level_counts else "Low"
     peak_level = (
@@ -82,7 +79,6 @@ def summarize_traffic_session(
         notes=notes,
     )
 
-    # Bulk log frame records
     log_density_records(session_id, frame_logs)
 
     summary = {
@@ -120,7 +116,7 @@ def generate_session_plots(
 
     df = pd.DataFrame(frame_logs)
 
-    # 1. Density and Vehicle Count Timeline
+    # Temporal profile comparing active vehicle counts against congestion threshold boundaries
     timeline_path = out_path / f"session_{session_id}_density_timeline.png"
     plt.figure(figsize=(10, 4.5))
     if "timestamp_sec" in df.columns:
@@ -142,7 +138,7 @@ def generate_session_plots(
     plt.savefig(timeline_path, dpi=150)
     plt.close()
 
-    # 2. Cumulative Class Distribution Donut Chart
+    # Compositional breakdown of all unique vehicles tracked across the session
     dist_path = out_path / f"session_{session_id}_class_distribution.png"
     last_cum = frame_logs[-1].get("cumulative_counts", {})
     if last_cum and sum(last_cum.values()) > 0:
@@ -189,13 +185,11 @@ def export_session_reports(
 
     logs = get_traffic_session_logs(session_id)
 
-    # Export frame logs to CSV
     csv_path = out_path / f"traffic_session_{session_id}_logs.csv"
     if logs:
         df = pd.DataFrame(logs)
         df.to_csv(csv_path, index=False)
 
-    # Export session metadata & summary to JSON
     json_path = out_path / f"traffic_session_{session_id}_summary.json"
     full_data = {
         "session_metadata": session,

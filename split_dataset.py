@@ -67,7 +67,6 @@ def split_dataset(
 
     print(DATA_LEAKAGE_WARNING)
 
-    # Discover classes
     class_dirs = [
         d for d in source_path.iterdir()
         if d.is_dir() and not d.name.startswith(".")
@@ -83,7 +82,6 @@ def split_dataset(
 
     for class_dir in class_dirs:
         class_name = class_dir.name
-        # Gather valid images
         all_images = [
             f for f in class_dir.iterdir()
             if f.is_file() and f.suffix.lower() in SUPPORTED_IMAGE_EXTS and is_valid_image(f)
@@ -93,7 +91,8 @@ def split_dataset(
             logger.warning(f"Class '{class_name}' has 0 valid images. Skipping.")
             continue
 
-        # Deterministic shuffle
+        # Sort paths before shuffling: filesystem directory traversal ordering varies across OS
+        # environments and inode tables. Sorting guarantees reproducible splits across machines.
         random.seed(seed)
         shuffled = sorted(all_images)
         random.shuffle(shuffled)
@@ -101,7 +100,7 @@ def split_dataset(
         n_total = len(shuffled)
         n_train = int(n_total * train_ratio)
         n_val = int(n_total * val_ratio)
-        # Ensure at least 1 image per split if total >= 3
+        # Guarantee representation across all three partitions when at least three samples exist
         if n_total >= 3:
             n_train = max(1, n_train)
             n_val = max(1, n_val)
@@ -113,7 +112,6 @@ def split_dataset(
             "test": shuffled[n_train + n_val :],
         }
 
-        # Perform copying/moving
         action_fn = shutil.move if move_files else shutil.copy2
         action_name = "Moved" if move_files else "Copied"
 

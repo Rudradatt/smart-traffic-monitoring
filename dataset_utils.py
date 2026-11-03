@@ -34,7 +34,7 @@ def is_valid_image(filepath: Union[str, Path]) -> bool:
     try:
         with Image.open(path) as img:
             img.verify()
-        # Verify only reads header; load actually decodes pixels
+        # verify() checks header integrity; load() decodes raw raster bytes to catch truncated image streams
         with Image.open(path) as img:
             img.load()
             if img.mode not in ("RGB", "L", "RGBA"):
@@ -84,7 +84,7 @@ def validate_dataset(dataset_dir: Union[str, Path]) -> Dict[str, Any]:
             report["missing_splits"].append(split)
 
     if not report["splits_found"]:
-        # Check if direct class folders exist (raw un-split dataset)
+        # If no train/val/test split folders exist, check if user pointed directly to unpartitioned class folders
         class_dirs = [d.name for d in path.iterdir() if d.is_dir() and not d.name.startswith(".")]
         if class_dirs:
             report["warnings"].append(
@@ -114,7 +114,6 @@ def validate_dataset(dataset_dir: Union[str, Path]) -> Dict[str, Any]:
                 f"Class folder mismatch in '{split}' split compared to other splits: {class_folders} vs {reference_classes}"
             )
 
-        # Count images and check for corrupt files
         split_counts = {}
         for c in class_folders:
             c_dir = split_dir / c
@@ -134,13 +133,12 @@ def validate_dataset(dataset_dir: Union[str, Path]) -> Dict[str, Any]:
 
         report["counts_by_split"][split] = split_counts
 
-    # Check for empty classes
     for split, counts in report["counts_by_split"].items():
         for c, count in counts.items():
             if count == 0:
                 report["warnings"].append(f"Class '{c}' in '{split}' split has 0 valid images.")
 
-    # Compute class imbalance for train split if present
+    # Gauge representation skew in the training partition to decide whether loss-weighting is needed
     if "train" in report["counts_by_split"]:
         train_counts = report["counts_by_split"]["train"]
         if train_counts and sum(train_counts.values()) > 0:
@@ -168,7 +166,6 @@ def validate_dataset(dataset_dir: Union[str, Path]) -> Dict[str, Any]:
             f"Detected {len(report['corrupt_images'])} corrupt or unreadable image(s)."
         )
 
-    # Missing splits error
     if "train" not in report["splits_found"]:
         report["is_valid"] = False
         report["errors"].append("Missing required 'train' split folder.")
@@ -251,7 +248,7 @@ def create_synthetic_sample_dataset(
         "test": max(1, samples_per_class - int(samples_per_class * 0.70) - int(samples_per_class * 0.15)),
     }
 
-    # Ensure min 1 sample in each split
+    # Enforce at least one example per split so subsequent loaders never encounter an empty directory
     for s in splits:
         if splits[s] < 1:
             splits[s] = 1
@@ -269,51 +266,43 @@ def create_synthetic_sample_dataset(
                 if img_file.exists():
                     continue
 
-                # Create synthetic canvas with realistic background gradient
+                # Procedural asphalt background with subtle luminance jitter
                 canvas = np.zeros((image_size[1], image_size[0], 3), dtype=np.uint8)
-                # Road/asphalt background with subtle variation
                 bg_intensity = np.random.randint(40, 75)
                 canvas[:, :] = [bg_intensity, bg_intensity, bg_intensity]
 
-                # Draw road markings
+                # Center lane markings
                 canvas[image_size[1] // 2 - 4 : image_size[1] // 2 + 4, :] = [200, 200, 200]
 
                 pil_img = Image.fromarray(canvas)
                 draw = ImageDraw.Draw(pil_img)
 
-                # Draw vehicle body geometry matching vehicle type
+                # Render category-specific geometric primitives (cabins, wheelbases, silhouettes)
                 w, h = image_size
                 box_margin = np.random.randint(25, 45)
 
                 if cls_name == "auto_rickshaw":
-                    # Distinctive yellow-green cabin
                     cabin_box = [box_margin, box_margin + 20, w - box_margin, h - box_margin]
                     draw.rectangle(cabin_box, fill=color_rgb, outline=(255, 255, 255), width=3)
-                    # 3 wheels (1 front, 2 rear)
+                    # Characteristic delta wheel configuration (single steer front, dual traction rear)
                     draw.ellipse([w // 2 - 12, box_margin, w // 2 + 12, box_margin + 24], fill=(20, 20, 20))
                     draw.ellipse([box_margin, h - box_margin - 20, box_margin + 24, h - box_margin + 4], fill=(20, 20, 20))
                     draw.ellipse([w - box_margin - 24, h - box_margin - 20, w - box_margin, h - box_margin + 4], fill=(20, 20, 20))
                 elif cls_name in ("motorcycle", "scooter"):
-                    # 2 wheels and elongated frame
                     draw.ellipse([w // 2 - 14, box_margin + 10, w // 2 + 14, box_margin + 38], fill=(15, 15, 15))
                     draw.ellipse([w // 2 - 14, h - box_margin - 38, w // 2 + 14, h - box_margin - 10], fill=(15, 15, 15))
                     draw.line([w // 2, box_margin + 24, w // 2, h - box_margin - 24], fill=color_rgb, width=12)
                 elif cls_name == "bicycle":
-                    # Thin frame with two circles
                     draw.ellipse([w // 2 - 10, box_margin + 10, w // 2 + 10, box_margin + 30], outline=(200, 200, 200), width=4)
                     draw.ellipse([w // 2 - 10, h - box_margin - 30, w // 2 + 10, h - box_margin - 10], outline=(200, 200, 200), width=4)
                     draw.line([w // 2, box_margin + 20, w // 2, h - box_margin - 20], fill=color_rgb, width=4)
                 elif cls_name in ("bus", "truck"):
-                    # Large rectangular body
                     draw.rectangle([box_margin - 10, box_margin, w - box_margin + 10, h - box_margin], fill=color_rgb, outline=(255, 255, 255), width=3)
-                    # Windshield
                     draw.rectangle([box_margin, box_margin + 10, w - box_margin, box_margin + 40], fill=(100, 150, 220))
                 else:  # car
-                    # Car profile
                     draw.rectangle([box_margin, box_margin + 15, w - box_margin, h - box_margin - 15], fill=color_rgb, outline=(255, 255, 255), width=3)
                     draw.rectangle([box_margin + 20, box_margin + 30, w - box_margin - 20, h - box_margin - 30], fill=(40, 60, 90))
 
-                # Text label watermark
                 draw.text(
                     (15, h - 25),
                     f"{cls_name} #{idx}",

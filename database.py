@@ -1,6 +1,6 @@
 """
-SQLite Database Module with Versioned Schema for Experiment Tracking & Traffic Analytics.
-Ensures zero data invention by recording real experiment metrics and monitoring logs.
+Embedded SQLite persistence layer for model training telemetry, multi-model benchmark
+runs, and frame-by-frame traffic video monitoring logs. Includes schema version tracking.
 """
 
 import json
@@ -34,11 +34,10 @@ def get_db_connection(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> Generator[
 
 
 def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
-    """Initialize database tables with schema migration checks."""
+    """Initialize relational tables and apply migrations when schema version bumps."""
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
 
-        # Schema version table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_version (
@@ -48,13 +47,11 @@ def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
             """
         )
 
-        # Check existing version
         cursor.execute("SELECT MAX(version) FROM schema_version;")
         row = cursor.fetchone()
         current_v = row[0] if (row and row[0] is not None) else 0
 
         if current_v < 1:
-            # Table 1: Experiments
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS experiments (
@@ -80,7 +77,6 @@ def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
                 """
             )
 
-            # Table 2: Model Comparisons
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS model_comparisons (
@@ -93,7 +89,6 @@ def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
                 """
             )
 
-            # Table 3: Traffic Monitoring Sessions
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS traffic_sessions (
@@ -117,7 +112,6 @@ def init_db(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> None:
                 """
             )
 
-            # Table 4: Frame-level Traffic Density Logs
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS traffic_density_logs (

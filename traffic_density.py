@@ -34,7 +34,10 @@ DENSITY_DISCLAIMER = (
 
 
 def ccw(A: Tuple[float, float], B: Tuple[float, float], C: Tuple[float, float]) -> bool:
-    """Helper to determine counter-clockwise point orientation."""
+    """
+    Determine whether three ordered 2D points form a counter-clockwise turn.
+    Calculates the sign of the cross-product of vectors (B - A) and (C - A).
+    """
     return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
 
 
@@ -45,9 +48,9 @@ def line_segments_intersect(
     D: Tuple[float, float],
 ) -> bool:
     """
-    Check if line segment AB intersects line segment CD.
-    AB: Vehicle trajectory segment (previous centroid -> current centroid)
-    CD: Virtual counting line segment
+    Evaluate if motion segment AB intersects virtual cordon line CD.
+    Uses orientation tests rather than slope-intercept solving to avoid division-by-zero
+    instabilities when trajectories or cordon lines are strictly vertical or collinear.
     """
     return (ccw(A, C, D) != ccw(B, C, D)) and (ccw(A, B, C) != ccw(A, B, D))
 
@@ -59,17 +62,13 @@ def determine_crossing_direction(
     D: Tuple[float, float],
 ) -> str:
     """
-    Determine crossing direction relative to line CD using 2D cross product.
-    A: start point, B: end point of movement
-    C: line start, D: line end
+    Determine directional vector (inbound vs. outbound) relative to cordon CD.
+    Evaluates the sign of the 2D cross-product between the line vector and motion vector.
     """
-    # Vector CD
     cd_x = D[0] - C[0]
     cd_y = D[1] - C[1]
-    # Vector AB
     ab_x = B[0] - A[0]
     ab_y = B[1] - A[1]
-    # 2D cross product CD x AB
     cross = cd_x * ab_y - cd_y * ab_x
     return "inbound" if cross > 0 else "outbound"
 
@@ -87,14 +86,12 @@ class TrafficDensityEstimator:
         occupancy_thresholds: Optional[Dict[str, float]] = None,
         allow_bidirectional: bool = True,
     ):
-        # Default counting line: horizontal line across center
         self.counting_line = counting_line or ((50, 360), (1230, 360))
         self.roi_polygon = roi_polygon
         self.density_thresholds = density_thresholds or DEFAULT_DENSITY_THRESHOLDS.copy()
         self.occupancy_thresholds = occupancy_thresholds or DEFAULT_OCCUPANCY_THRESHOLDS.copy()
         self.allow_bidirectional = allow_bidirectional
 
-        # State tracking
         self.counted_tracks: Set[int] = set()
         self.class_counts: Dict[str, int] = defaultdict(int)
         self.direction_counts: Dict[str, int] = {"inbound": 0, "outbound": 0}
@@ -158,7 +155,6 @@ class TrafficDensityEstimator:
         newly_crossed = []
         total_vehicle_box_area = 0
 
-        # Check for line crossings
         for trk in active_tracks:
             tid = trk["track_id"]
             curr_c = trk["centroid"]
@@ -169,7 +165,7 @@ class TrafficDensityEstimator:
             box_area = max(0, x2 - x1) * max(0, y2 - y1)
             total_vehicle_box_area += box_area
 
-            # Only check tracks with at least 2 centroid observations
+            # Require at least two centroid frames to form a directional movement vector
             if prev_c is not None and tid not in self.counted_tracks:
                 if line_segments_intersect(prev_c, curr_c, c_line_start, c_line_end):
                     direction = determine_crossing_direction(prev_c, curr_c, c_line_start, c_line_end)
@@ -189,7 +185,7 @@ class TrafficDensityEstimator:
 
         self.active_vehicle_count = len(active_tracks)
 
-        # Occupancy ratio proxy: vehicle box area / frame area (or ROI area)
+        # 2D optical occlusion proxy: ratio of total vehicle bounding box footprint against the frame or ROI area
         roi_area = frame_h * frame_w
         if self.roi_polygon and len(self.roi_polygon) >= 3:
             pts = np.array(self.roi_polygon, np.int32)
@@ -200,7 +196,6 @@ class TrafficDensityEstimator:
             self.active_vehicle_count, self.current_occupancy_ratio
         )
 
-        # Vehicles Per Minute (VPM)
         vpm = 0.0
         if elapsed_seconds > 0.5:
             vpm = round((self.total_counted / elapsed_seconds) * 60.0, 1)
@@ -229,14 +224,11 @@ class TrafficDensityEstimator:
         annotated = frame.copy()
         h, w = frame.shape[:2]
 
-        # Draw counting line
         pt1, pt2 = self.counting_line
-        cv2.line(annotated, pt1, pt2, (0, 255, 255), 3)  # Yellow counting line
-        # Draw line endpoints
+        cv2.line(annotated, pt1, pt2, (0, 255, 255), 3)
         cv2.circle(annotated, pt1, 6, (0, 200, 255), -1)
         cv2.circle(annotated, pt2, 6, (0, 200, 255), -1)
 
-        # Counting line label
         mid_x = int((pt1[0] + pt2[0]) / 2)
         mid_y = int((pt1[1] + pt2[1]) / 2)
         cv2.putText(
@@ -253,22 +245,20 @@ class TrafficDensityEstimator:
         if not show_hud:
             return annotated
 
-        # HUD Top Banner
+        # Semi-transparent telemetry banner at the top of the viewport
         hud_bg = annotated.copy()
         cv2.rectangle(hud_bg, (10, 10), (w - 10, 95), (15, 20, 35), -1)
         cv2.addWeighted(hud_bg, 0.75, annotated, 0.25, 0, annotated)
         cv2.rectangle(annotated, (10, 10), (w - 10, 95), (60, 70, 90), 1)
 
-        # Density Status Color
         d_level = metrics.get("density_level", "Low")
         if d_level == "Low":
-            badge_color = (0, 255, 0)      # Green
+            badge_color = (0, 255, 0)
         elif d_level == "Medium":
-            badge_color = (0, 215, 255)    # Orange/Yellow
+            badge_color = (0, 215, 255)
         else:
-            badge_color = (0, 0, 255)      # Red
+            badge_color = (0, 0, 255)
 
-        # Density Badge
         cv2.circle(annotated, (35, 40), 12, badge_color, -1)
         cv2.putText(
             annotated,
@@ -281,7 +271,6 @@ class TrafficDensityEstimator:
             cv2.LINE_AA,
         )
 
-        # Active & Total Counts
         active_cnt = metrics.get("active_vehicles", 0)
         tot_cnt = metrics.get("total_counted", 0)
         vpm = metrics.get("vehicles_per_minute", 0.0)
@@ -297,7 +286,6 @@ class TrafficDensityEstimator:
             cv2.LINE_AA,
         )
 
-        # Per-Class summary on the right side of the HUD
         class_counts = metrics.get("class_counts", {})
         if class_counts:
             items = list(class_counts.items())[:4]

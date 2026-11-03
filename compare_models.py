@@ -49,7 +49,7 @@ def measure_inference_speed(
     model.eval()
     dummy_input = torch.randn(1, 3, image_size, image_size, device=device)
 
-    # Warmup
+    # Prime PyTorch execution graph, memory pools, and kernel JIT compilation before benchmarking
     with torch.no_grad():
         for _ in range(warmup_runs):
             _ = model(dummy_input)
@@ -106,18 +106,15 @@ def compare_models(
         arch = meta.get("architecture", path.stem)
         image_size = meta.get("image_size", 224)
 
-        # 1. Parameter counts
         param_info = calculate_model_parameters(model)
         size_mb = get_file_size_mb(path)
 
-        # 2. Latency & throughput
         speed_info = measure_inference_speed(
             model=model,
             image_size=image_size,
             device=device,
         )
 
-        # 3. Test set evaluation
         eval_metrics = evaluate_classifier(
             checkpoint_path=path,
             test_dir=test_path,
@@ -149,11 +146,9 @@ def compare_models(
     csv_path = out_path / "models_comparison.csv"
     comp_df.to_csv(csv_path, index=False)
 
-    # Plot Comparison Charts
     fig_path = out_path / "models_comparison_chart.png"
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-    # 1. Test Accuracy
     axes[0, 0].bar(comp_df["architecture"], comp_df["test_accuracy"] * 100, color="#34C759")
     axes[0, 0].set_title("Test Accuracy (%)", fontsize=12)
     axes[0, 0].set_ylabel("Accuracy %")
@@ -161,7 +156,6 @@ def compare_models(
     for i, v in enumerate(comp_df["test_accuracy"]):
         axes[0, 0].text(i, v * 100 + 1, f"{v*100:.1f}%", ha="center", fontweight="bold")
 
-    # 2. Macro F1
     axes[0, 1].bar(comp_df["architecture"], comp_df["macro_f1"] * 100, color="#007AFF")
     axes[0, 1].set_title("Macro F1-Score (%)", fontsize=12)
     axes[0, 1].set_ylabel("F1 %")
@@ -169,7 +163,6 @@ def compare_models(
     for i, v in enumerate(comp_df["macro_f1"]):
         axes[0, 1].text(i, v * 100 + 1, f"{v*100:.1f}%", ha="center", fontweight="bold")
 
-    # 3. Latency (ms)
     axes[1, 0].bar(comp_df["architecture"], comp_df["latency_ms"], color="#FF9500")
     axes[1, 0].set_title("Inference Latency (ms/img, lower is better)", fontsize=12)
     axes[1, 0].set_ylabel("Milliseconds")
@@ -177,7 +170,6 @@ def compare_models(
     for i, v in enumerate(comp_df["latency_ms"]):
         axes[1, 0].text(i, v + 0.5, f"{v:.1f}ms", ha="center")
 
-    # 4. Total Parameters (Millions)
     params_m = comp_df["total_params"] / 1e6
     axes[1, 1].bar(comp_df["architecture"], params_m, color="#AF52DE")
     axes[1, 1].set_title("Total Parameters (Millions)", fontsize=12)
@@ -202,7 +194,6 @@ def compare_models(
     json_path = out_path / "models_comparison.json"
     save_json(summary_result, json_path)
 
-    # Record in SQLite
     log_model_comparison(
         comparison_name=f"Comparison_{int(time.time())}",
         models_evaluated=[str(c) for c in checkpoints],

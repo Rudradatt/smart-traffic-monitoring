@@ -287,13 +287,9 @@ def stat_panel(label: str, value: Any, sub: str = "", tone: str = "ink") -> None
     )
 
 
-# Ensure database is initialized
 init_db()
 dev_info = get_device_info()
 
-# ------------------------------------------------------------------------------
-# Sidebar
-# ------------------------------------------------------------------------------
 st.sidebar.markdown(
     "<div class='brand'><b>Smart Traffic Monitor</b>"
     "<span>Vehicle detection, tracking and classification</span>"
@@ -308,7 +304,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Display label -> internal page key (keeps the page logic below untouched)
+# Sidebar navigation options mapping user-friendly labels to internal view routing keys
 NAV = {
     "Dashboard": "Overview",
     "Dataset Check": "Dataset Explorer",
@@ -324,7 +320,6 @@ st.sidebar.markdown("<div class='side-label'>Go to</div>", unsafe_allow_html=Tru
 nav_label = st.sidebar.radio("Go to", list(NAV.keys()), label_visibility="collapsed")
 page_choice = NAV[nav_label]
 
-# Discover available trained checkpoints
 available_checkpoints = sorted(list(MODELS_DIR.glob("*.pth")))
 checkpoint_options = {cp.name: cp for cp in available_checkpoints}
 
@@ -666,7 +661,7 @@ elif page_choice == "Live/Video Monitoring":
         start_proc = st.button("Process video", type="primary", use_container_width=True)
 
         if start_proc:
-            # Heavy objects are created only when processing starts
+            # Instantiate detector, tracker, and density estimator only when the pipeline execution is triggered
             tracker = VehicleTracker(
                 model_path=yolo_weight,
                 tracker_type="bytetrack.yaml",
@@ -699,13 +694,9 @@ elif page_choice == "Live/Video Monitoring":
                 frame_idx += 1
                 elapsed_sec = frame_idx / orig_fps
 
-                # 1. Tracking update
                 tracks = tracker.update(frame)
-
-                # 2. Density & counting update
                 metrics = density_est.update(tracks, frame.shape, elapsed_seconds=elapsed_sec)
 
-                # 3. Draw annotations
                 annotated = tracker.draw_tracks(frame, tracks, draw_trails=True)
                 annotated = density_est.draw_density_overlay(annotated, metrics, show_hud=True)
 

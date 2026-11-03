@@ -139,7 +139,6 @@ def train_classifier(
     logger.info(f"Target Device: {device} | Architecture: {arch}")
     logger.info(f"Checking dataset structure in: {data_path}")
 
-    # Validate dataset
     val_report = validate_dataset(data_path)
     if not val_report["is_valid"]:
         raise ValueError(f"Dataset validation failed: {val_report['errors']}")
@@ -152,7 +151,6 @@ def train_classifier(
             f"Expected 'train' and 'val' subdirectories inside {data_path}."
         )
 
-    # Transforms (train gets augmentation, val gets clean resize)
     train_transform = get_data_transforms(image_size=image_size, is_train=True, augment=True)
     val_transform = get_data_transforms(image_size=image_size, is_train=False, augment=False)
 
@@ -166,13 +164,15 @@ def train_classifier(
     if num_classes < 2:
         raise ValueError(f"Need at least 2 classes for classification. Found {num_classes}.")
 
+    # Guard against BatchNorm instability: a solitary trailing sample in the final batch will
+    # cause batch-normalization variance calculation to collapse or throw an error.
     drop_last = (len(train_dataset) > batch_size and len(train_dataset) % batch_size == 1)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         drop_last=drop_last,
-        num_workers=0,  # Safe default on Windows
+        num_workers=0,  # Single-process data loading to prevent Windows subprocess pickling quirks
         pin_memory=(device.type == "cuda"),
     )
     val_loader = DataLoader(
@@ -183,7 +183,6 @@ def train_classifier(
         pin_memory=(device.type == "cuda"),
     )
 
-    # Model instantiation
     model = build_classifier(
         arch=arch,
         num_classes=num_classes,
@@ -192,7 +191,6 @@ def train_classifier(
     )
     model.to(device)
 
-    # Class weights for imbalanced data
     if use_class_weights:
         weights = compute_class_weights(train_dataset).to(device)
         criterion = nn.CrossEntropyLoss(weight=weights)
@@ -245,7 +243,6 @@ def train_classifier(
         if progress_callback:
             progress_callback(epoch, epochs, record)
 
-        # Checkpoint if validation loss improves
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_val_acc = val_acc
@@ -271,12 +268,10 @@ def train_classifier(
     total_training_time = time.time() - start_total_time
     logger.info(f"Training completed in {format_time(total_training_time)}")
 
-    # Save training history CSV
     history_df = pd.DataFrame(history)
     history_csv = results_path / f"{arch}_history.csv"
     history_df.to_csv(history_csv, index=False)
 
-    # Plot training curves
     fig_path = results_path / f"{arch}_training_curves.png"
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
@@ -300,7 +295,6 @@ def train_classifier(
     plt.savefig(fig_path, dpi=150)
     plt.close()
 
-    # Log to SQLite Database
     exp_id = log_experiment(
         experiment_name=f"{arch}_{int(time.time())}",
         architecture=arch,

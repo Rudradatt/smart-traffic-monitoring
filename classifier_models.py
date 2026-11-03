@@ -25,19 +25,19 @@ from torchvision.models import (
 from config import CLASSIFIER_ARCHITECTURES, NORM_MEAN, NORM_STD
 
 
-# =====================================================================
-# CUSTOM CNN - every layer is written by hand in NumPy (forward AND backward).
-# No nn.Conv2d / nn.BatchNorm2d / nn.ReLU / nn.MaxPool2d / nn.Linear / nn.Dropout
-# is used. The maths lives in the _Np* classes below.
+# ------------------------------------------------------------------------------
+# Pure NumPy CNN Engine (Zero PyTorch NN Dependencies)
 #
-# CustomTrafficCNN (further down) is only a thin shell that lets the rest of your
-# project (build_classifier, train_classifier.py, save_checkpoint, load_checkpoint)
-# keep working unchanged: it stores the weights as torch Parameters so your
-# existing AdamW optimizer can update them, and it hands the real computation
-# to the hand-written NumPy layers through one custom autograd function.
-# =====================================================================
+# Implements complete forward and backward propagation routines in vectorized NumPy
+# without touching torch.nn primitives (Conv2d, BatchNorm2d, MaxPool2d, Linear).
+#
+# CustomTrafficCNN wraps this engine in a torch.autograd.Function bridge. Model
+# parameters are mirrored as torch.nn.Parameter references purely as a storage
+# and state_dict abstraction so standard optimizers (e.g. AdamW) and checkpointing
+# utilities integrate without modification.
+# ------------------------------------------------------------------------------
 class _P:
-    """A trainable NumPy tensor plus its gradient."""
+    """Trainable parameter container holding active weights and accumulated gradients."""
 
     def __init__(self, value):
         self.value = value.astype(np.float32)
@@ -45,7 +45,11 @@ class _P:
 
 
 class _NpConv2D:
-    """kxk convolution using im2col: gather every patch, then ONE matrix multiply."""
+    """
+    2D spatial convolution implemented via im2col and GEMM.
+    Uses numpy sliding_window_view for zero-copy patch gathering, converting
+    spatial convolutions into a single contiguous matrix multiplication.
+    """
 
     def __init__(self, in_ch, out_ch, rng, k=3, stride=1, pad=1):
         fan_in = in_ch * k * k
@@ -60,7 +64,7 @@ class _NpConv2D:
         N, C, H, W = x.shape
         k, s, p = self.k, self.s, self.p
         xp = np.pad(x, ((0, 0), (0, 0), (p, p), (p, p))) if p else x
-        win = sliding_window_view(xp, (k, k), axis=(2, 3))[:, :, ::s, ::s]  # N,C,oh,ow,k,k
+        win = sliding_window_view(xp, (k, k), axis=(2, 3))[:, :, ::s, ::s]  # N, C, out_h, out_w, k, k
         oh, ow = win.shape[2], win.shape[3]
         cols = win.transpose(0, 2, 3, 1, 4, 5).reshape(N * oh * ow, C * k * k)
         F = self.W.value.shape[0]
@@ -288,8 +292,8 @@ class CustomTrafficCNN(nn.Module):
         rng = np.random.default_rng(torch.initial_seed() % (2 ** 32))
         self._core = _NpCore(num_classes, in_channels, (16, 32, 64, 128), dropout_rate, rng)
 
-        # Weights live in torch Parameters (only as storage, so the optimizer and
-        # state_dict can see them). Batch-norm running stats live in buffers.
+        # Expose NumPy weights as torch Parameters so PyTorch optimizers and state_dict
+        # mechanisms can inspect and serialize them seamlessly.
         self._weight_names = []
         for i, p in enumerate(self._core.params()):
             name = f"w{i}"
@@ -308,7 +312,8 @@ class CustomTrafficCNN(nn.Module):
         weights = [getattr(self, n) for n in self._weight_names]
         out = _NumpyCNNFunction.apply(x, self._core, self.training, *weights)
 
-        if self.training:  # keep batch-norm running stats in the checkpoint
+        if self.training:
+            # Sync evolving batch-norm running moments back to torch buffers for checkpoint persistence
             with torch.no_grad():
                 for i, bn in enumerate(bns):
                     getattr(self, f"bn{i}_mean").copy_(torch.from_numpy(np.asarray(bn.running_mean)))
@@ -370,7 +375,7 @@ class MobileNetV3Transfer(nn.Module):
             for param in self.backbone.features.parameters():
                 param.requires_grad = False
 
-        # MobileNetV3 classifier head has [Linear, Hardswish, Dropout, Linear]
+        # Adapt final projection in the classifier head: [Linear, Hardswish, Dropout, Linear]
         last_channel = self.backbone.classifier[3].in_features
         self.backbone.classifier[2] = nn.Dropout(p=dropout_rate)
         self.backbone.classifier[3] = nn.Linear(last_channel, num_classes)

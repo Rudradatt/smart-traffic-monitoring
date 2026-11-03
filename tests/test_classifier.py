@@ -93,7 +93,6 @@ def test_save_and_load_checkpoint_roundtrip(tmp_path):
     assert meta["val_accuracy"] == 0.88
     assert meta["epoch"] == 5
 
-    # Test forward pass with loaded model
     dummy = torch.randn(1, 3, 224, 224)
     out = loaded_model(dummy)
     assert out.shape == (1, len(class_names))

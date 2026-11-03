@@ -58,14 +58,12 @@ def test_create_synthetic_dataset_and_validate(tmp_path):
     assert "test" in report["splits_found"]
     assert report["total_valid_images"] > 0
 
-    # Ensure all 7 classes exist in the train split
     train_classes = report["classes_by_split"]["train"]
     for c in VEHICLE_CLASSES:
         assert c in train_classes
 
 
 def test_split_dataset_reproducibility_and_ratios(tmp_path):
-    # Create raw directory with two classes
     raw_dir = tmp_path / "raw"
     dest_dir1 = tmp_path / "split1"
     dest_dir2 = tmp_path / "split2"
@@ -77,7 +75,7 @@ def test_split_dataset_reproducibility_and_ratios(tmp_path):
             img = Image.new("RGB", (64, 64), color=(i * 10, i * 10, i * 10))
             img.save(c_dir / f"img_{i:02d}.png")
 
-    # Split with same seed
+    # Partitions generated from the identical random seed must be strictly identical
     res1 = split_dataset(raw_dir, dest_dir1, train_ratio=0.7, val_ratio=0.2, test_ratio=0.1, seed=123)
     res2 = split_dataset(raw_dir, dest_dir2, train_ratio=0.7, val_ratio=0.2, test_ratio=0.1, seed=123)
 

@@ -109,7 +109,6 @@ def evaluate_classifier(
     y_true_arr = np.array(y_true)
     y_pred_arr = np.array(y_pred)
 
-    # Calculate overall metrics
     acc = float(accuracy_score(y_true_arr, y_pred_arr))
     prec_macro, rec_macro, f1_macro, _ = precision_recall_fscore_support(
         y_true_arr, y_pred_arr, average="macro", zero_division=0
@@ -118,7 +117,6 @@ def evaluate_classifier(
         y_true_arr, y_pred_arr, average="weighted", zero_division=0
     )
 
-    # Per-class metrics
     prec_per_class, rec_per_class, f1_per_class, support_per_class = (
         precision_recall_fscore_support(
             y_true_arr,
@@ -141,19 +139,17 @@ def evaluate_classifier(
             }
         )
 
-    # Confusion Matrix
     cm = confusion_matrix(
         y_true_arr, y_pred_arr, labels=list(range(len(expected_classes)))
     )
 
-    # Normalized Confusion Matrix
+    # Normalize across rows (true ground-truth support) to evaluate per-class recall rates
     cm_norm = np.zeros_like(cm, dtype=float)
     row_sums = cm.sum(axis=1)
     for i in range(len(row_sums)):
         if row_sums[i] > 0:
             cm_norm[i] = cm[i] / row_sums[i]
 
-    # Save Confusion Matrix Plot
     cm_fig_path = out_path / f"{arch}_confusion_matrix.png"
     plt.figure(figsize=(9, 7))
     plt.imshow(cm_norm, interpolation="nearest", cmap=plt.cm.Blues)
@@ -184,12 +180,10 @@ def evaluate_classifier(
     plt.savefig(cm_fig_path, dpi=160)
     plt.close()
 
-    # Save Per-Class CSV
     per_class_df = pd.DataFrame(per_class_list)
     per_class_csv = out_path / f"{arch}_per_class_metrics.csv"
     per_class_df.to_csv(per_class_csv, index=False)
 
-    # Save JSON Report
     results = {
         "architecture": arch,
         "checkpoint_path": str(checkpoint_file),
@@ -213,7 +207,7 @@ def evaluate_classifier(
     json_report_path = out_path / f"{arch}_test_metrics.json"
     save_json(results, json_report_path)
 
-    # Link back to experiment in SQLite database if found
+    # Propagate test split results back into the matching SQLite training run
     experiments = get_experiments()
     for exp in experiments:
         if exp.get("checkpoint_path") == str(checkpoint_file):

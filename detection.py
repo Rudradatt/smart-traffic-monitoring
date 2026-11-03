@@ -99,7 +99,7 @@ class VehicleDetector:
         self.yolo_model = YOLO(model_path)
         self.model_names = self.yolo_model.names
 
-        # Determine whether model is custom 7-class or standard COCO
+        # Check if weights already map to our 7-class ontology, otherwise apply COCO label translation
         model_class_list = list(self.model_names.values())
         if all(c in model_class_list for c in VEHICLE_CLASSES):
             self.is_custom_7class = True
@@ -110,7 +110,6 @@ class VehicleDetector:
             self.class_map = COCO_VEHICLE_CLASS_IDS
             logger.info(f"Using pretrained detector. {COCO_LIMITATION_EXPLANATION}")
 
-        # Optional CNN crop refiner
         self.refiner_model = None
         self.refiner_meta = None
         if self.refiner_checkpoint and self.refiner_checkpoint.is_file():
@@ -168,7 +167,6 @@ class VehicleDetector:
             conf = float(confs[i])
             x1, y1, x2, y2 = coords[i]
 
-            # Filter vehicle classes
             if self.filter_vehicles_only:
                 if cls_id not in self.class_map:
                     continue
@@ -185,7 +183,9 @@ class VehicleDetector:
             refiner_conf = None
             final_class = class_name
 
-            # Optional CNN Refinement for sub-class disambiguation
+            # Run ambiguous detections (e.g. motorcycles or cars) through our secondary 7-class
+            # classifier to disambiguate sub-categories (scooters vs. motorbikes vs. auto-rickshaws).
+            # We guard against tiny crops (<16px) where spatial resolution is insufficient for inference.
             if (
                 self.refiner_model is not None
                 and class_name in self.refine_classes
@@ -241,10 +241,8 @@ class VehicleDetector:
 
             color = CLASS_COLORS_BGR.get(cname, (0, 255, 0))
 
-            # Bounding box
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
-            # Label text
             label = f"{cname}"
             if show_confidence:
                 label += f" {conf*100:.0f}%"

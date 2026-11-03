@@ -50,7 +50,6 @@ def predict_vehicle_image(
     class_names = meta.get("class_names", [])
     image_size = meta.get("image_size", 224)
 
-    # Load and convert image to RGB PIL
     if isinstance(image_input, (str, Path)):
         img_path = Path(image_input)
         if not img_path.is_file():
@@ -63,11 +62,10 @@ def predict_vehicle_image(
     else:
         raise TypeError(f"Unsupported image input type: {type(image_input)}")
 
-    # Preprocess
     transform = get_data_transforms(image_size=image_size, is_train=False, augment=False)
     tensor_img = transform(pil_img).unsqueeze(0).to(device)
 
-    # Inference with precise timing
+    # Flush the CUDA stream before and after kernel execution to isolate true hardware compute duration
     if device.type == "cuda":
         torch.cuda.synchronize()
     start_t = time.time()
@@ -91,7 +89,6 @@ def predict_vehicle_image(
         for i, prob in enumerate(probabilities)
     }
 
-    # Sort probabilities descending
     sorted_probs = dict(sorted(prob_dict.items(), key=lambda item: item[1], reverse=True))
 
     return {

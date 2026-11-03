@@ -1,6 +1,6 @@
 """
-General Utility Functions for Smart Traffic Monitoring System.
-Includes seed initialization, device inspection, file I/O, and model inspection.
+General utility suite for reproducibility seeding, hardware diagnostics,
+safe JSON serialization, model parameter accounting, and logging.
 """
 
 import json
@@ -18,7 +18,9 @@ import torch.nn as nn
 
 def set_seed(seed: int = 42) -> None:
     """
-    Set random seed across Python, NumPy, and PyTorch for reproducible runs.
+    Lock random generators across standard library, NumPy, and PyTorch.
+    When CUDA is present, we enforce cuDNN determinism and disable benchmark
+    auto-tuning to guarantee identical training trajectories across runs.
     """
     random.seed(seed)
     np.random.seed(seed)
@@ -31,9 +33,7 @@ def set_seed(seed: int = 42) -> None:
 
 
 def get_device_info() -> Dict[str, Any]:
-    """
-    Return detailed hardware and device information.
-    """
+    """Inspect active hardware environment, returning driver status and VRAM capacity."""
     info = {
         "cuda_available": torch.cuda.is_available(),
         "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
@@ -70,7 +70,10 @@ def format_time(seconds: float) -> str:
 
 
 def save_json(data: Dict[str, Any], filepath: Union[str, Path]) -> None:
-    """Save dictionary to formatted JSON file with parent folder creation."""
+    """
+    Persist dictionary to formatted JSON. Automatically coerces non-primitive
+    types (NumPy scalars/arrays, Timestamps, and Paths) to prevent serializing blowups.
+    """
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -90,7 +93,7 @@ def save_json(data: Dict[str, Any], filepath: Union[str, Path]) -> None:
 
 
 def load_json(filepath: Union[str, Path]) -> Optional[Dict[str, Any]]:
-    """Safely load JSON file or return None if missing or corrupt."""
+    """Load JSON from disk, returning None if missing or unreadable without raising."""
     path = Path(filepath)
     if not path.is_file():
         return None
@@ -103,7 +106,7 @@ def load_json(filepath: Union[str, Path]) -> Optional[Dict[str, Any]]:
 
 
 def calculate_model_parameters(model: nn.Module) -> Dict[str, int]:
-    """Calculate total and trainable parameters for any PyTorch module."""
+    """Inspect parameter tensors to report total vs. trainable parameter counts."""
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return {
@@ -122,7 +125,7 @@ def get_file_size_mb(filepath: Union[str, Path]) -> float:
 
 
 def setup_logger(name: str = "traffic_system", level: int = logging.INFO) -> logging.Logger:
-    """Configure a clean standardized logger."""
+    """Instantiate or retrieve an idempotent console stream logger."""
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.setLevel(level)
@@ -134,3 +137,4 @@ def setup_logger(name: str = "traffic_system", level: int = logging.INFO) -> log
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     return logger
+

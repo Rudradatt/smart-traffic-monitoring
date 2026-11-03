@@ -19,21 +19,20 @@ def generate_sample_traffic_video(output_path: Path = DATA_DIR / "sample_traffic
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h))
 
-    # Road background
+    # Render a controlled procedural sequence with distinct moving shapes crossing the cordon line
     for i in range(num_frames):
         frame = np.full((h, w, 3), 45, dtype=np.uint8)
 
-        # Road boundaries & lane dividers
         cv2.line(frame, (100, 0), (100, h), (255, 255, 255), 2)
         cv2.line(frame, (540, 0), (540, h), (255, 255, 255), 2)
         cv2.line(frame, (320, 0), (320, h), (200, 200, 0), 2)
 
-        # Vehicle 1 (Car): moving downwards crossing line at Y=180
+        # Target 1 (Inbound): moving top-to-bottom across the central cordon line at Y=180
         y_car = int(30 + (i / num_frames) * 280)
         cv2.rectangle(frame, (180, y_car), (260, y_car + 70), (0, 200, 50), -1)
         cv2.rectangle(frame, (190, y_car + 10), (250, y_car + 40), (20, 50, 100), -1)
 
-        # Vehicle 2 (Motorcycle): moving upwards
+        # Target 2 (Outbound): moving bottom-to-top to verify bidirectional tracking independence
         y_moto = int(300 - (i / num_frames) * 260)
         cv2.rectangle(frame, (380, y_moto), (410, y_moto + 50), (200, 50, 200), -1)
 

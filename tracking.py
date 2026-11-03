@@ -57,7 +57,6 @@ class VehicleTracker:
         self.model = YOLO(model_path)
         self.model_names = self.model.names
 
-        # Check 7-class or COCO
         model_classes = list(self.model_names.values())
         if all(c in model_classes for c in VEHICLE_CLASSES):
             self.class_map = {idx: name for idx, name in self.model_names.items() if name in VEHICLE_CLASSES}
@@ -68,11 +67,10 @@ class VehicleTracker:
         self.trajectories: Dict[int, Deque[Tuple[int, int]]] = defaultdict(
             lambda: deque(maxlen=self.max_trajectory_length)
         )
-        # Persistent class assignments for tracks (majority voting or initial)
+        # Running tally of class observations per track ID to eliminate frame-to-frame flicker via majority voting
         self.track_class_votes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self.track_final_classes: Dict[int, str] = {}
 
-        # Optional CNN crop refiner
         self.refiner_checkpoint = Path(refiner_checkpoint) if refiner_checkpoint else None
         self.refiner_threshold = refiner_threshold
         self.refiner_model = None
@@ -88,7 +86,7 @@ class VehicleTracker:
         self.trajectories.clear()
         self.track_class_votes.clear()
         self.track_final_classes.clear()
-        # Reset internal tracker state in YOLO
+        # Flush internal ByteTrack Kalman filters and association state inside YOLO
         if hasattr(self.model, "predictor") and self.model.predictor is not None:
             self.model.predictor.trackers = []
 
@@ -135,7 +133,7 @@ class VehicleTracker:
         confs = boxes_obj.conf.cpu().numpy()
         classes = boxes_obj.cls.cpu().numpy().astype(int)
 
-        # Track IDs might be None if tracker hasn't assigned them yet
+        # Candidates in their initial frames may lack a confirmed track ID from ByteTrack
         track_ids = (
             boxes_obj.id.cpu().numpy().astype(int)
             if boxes_obj.id is not None
@@ -147,7 +145,6 @@ class VehicleTracker:
             conf = float(confs[i])
             x1, y1, x2, y2 = coords[i]
 
-            # Filter vehicle classes
             if self.filter_vehicles_only:
                 if cls_id not in self.class_map:
                     continue
@@ -155,18 +152,15 @@ class VehicleTracker:
             else:
                 detected_class = self.model_names.get(cls_id, f"class_{cls_id}")
 
-            # Safe bounding box clip
             x1_c = max(0, int(round(x1)))
             y1_c = max(0, int(round(y1)))
             x2_c = min(w, int(round(x2)))
             y2_c = min(h, int(round(y2)))
 
-            # If track ID is missing from model, skip or assign negative dummy
             if track_ids is None or i >= len(track_ids) or track_ids[i] is None:
                 continue
             track_id = int(track_ids[i])
 
-            # Optional CNN refinement for ambiguous classes (e.g. motorcycle -> scooter/auto_rickshaw)
             final_class = detected_class
             if (
                 self.refiner_model is not None
@@ -188,14 +182,12 @@ class VehicleTracker:
                 except Exception:
                     pass
 
-            # Class vote smoothing to prevent flickering between frames
             self.track_class_votes[track_id][final_class] += 1
             stable_class = max(
                 self.track_class_votes[track_id].items(), key=lambda x: x[1]
             )[0]
             self.track_final_classes[track_id] = stable_class
 
-            # Compute centroid
             cx = int((x1_c + x2_c) / 2)
             cy = int((y1_c + y2_c) / 2)
             centroid = (cx, cy)
@@ -241,19 +233,15 @@ class VehicleTracker:
 
             color = CLASS_COLORS_BGR.get(cname, (0, 255, 0))
 
-            # Bounding box
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
-            # Draw trajectory trail
             if draw_trails and len(trajectory) > 1:
                 pts = np.array(trajectory, np.int32).reshape((-1, 1, 2))
                 cv2.polylines(annotated, [pts], isClosed=False, color=color, thickness=2)
 
-            # Centroid point
             cx, cy = trk["centroid"]
             cv2.circle(annotated, (cx, cy), 4, (0, 0, 255), -1)
 
-            # Label banner
             label = f"#{tid} {cname} {conf*100:.0f}%"
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(

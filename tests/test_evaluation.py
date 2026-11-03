@@ -26,7 +26,7 @@ def test_perfect_classification_metrics():
 
 
 def test_zero_division_edge_case():
-    # Class 2 is never predicted
+    # Verify zero_division parameter prevents exceptions when an entire class has 0 predictions
     y_true = np.array([0, 1, 2, 0, 1, 2])
     y_pred = np.array([0, 1, 0, 0, 1, 0])
 
@@ -44,9 +44,9 @@ def test_confusion_matrix_dimensions():
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
 
     assert cm.shape == (3, 3)
-    assert cm[0, 0] == 1  # class 0 predicted as 0
-    assert cm[1, 2] == 1  # class 1 predicted as 2
-    assert cm[2, 1] == 1  # class 2 predicted as 1
+    assert cm[0, 0] == 1
+    assert cm[1, 2] == 1
+    assert cm[2, 1] == 1
 
 
 def test_evaluate_classifier_pipeline(tmp_path):
